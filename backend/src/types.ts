@@ -41,3 +41,10 @@ const WIN_LINES: number[][] = [
 ];
 
 const TIMED_MODE_TURN_SECONDS = 30;
+
+// Module name used to register the match handler — shared across all files
+const MODULE_NAME = "tictactoe";
+
+// RPC function IDs — registered in InitModule and called by the frontend
+const RPC_CREATE_ROOM = "createRoom";
+const RPC_LIST_ROOMS  = "listRooms";

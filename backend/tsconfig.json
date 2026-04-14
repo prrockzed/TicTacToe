@@ -2,6 +2,7 @@
   "files": [
     "./src/types.ts",
     "./src/match.ts",
+    "./src/matchmaker.ts",
     "./src/main.ts"
   ],
   "compilerOptions": {

@@ -20,6 +20,11 @@ var WIN_LINES = [
     [2, 4, 6], // diagonal top-right to bottom-left
 ];
 var TIMED_MODE_TURN_SECONDS = 30;
+// Module name used to register the match handler — shared across all files
+var MODULE_NAME = "tictactoe";
+// RPC function IDs — registered in InitModule and called by the frontend
+var RPC_CREATE_ROOM = "createRoom";
+var RPC_LIST_ROOMS = "listRooms";
 // Nakama Match Handler — server-authoritative Tic-Tac-Toe logic.
 // The client only sends OpCode.MAKE_MOVE with a position (0-8).
 // The server validates, applies, and broadcasts the canonical GameState.
@@ -283,15 +288,118 @@ var matchHandler = {
     matchTerminate: matchTerminate,
     matchSignal: matchSignal,
 };
+// Nakama Matchmaking System
+//
+// Flows supported:
+//  1. Auto-matchmaking  — client adds a ticket; when 2 players match,
+//                         matchmakerMatched creates a match and returns its ID.
+//  2. Create room       — rpcCreateRoom creates a named match, returns matchId.
+//  3. List rooms        — rpcListRooms returns open matches (1 player waiting).
+// ─── matchmakerMatched ────────────────────────────────────────────────────────
+// Called by Nakama when the matchmaker finds exactly 2 compatible players.
+// We create the authoritative match and return its ID so both clients join it.
+var matchmakerMatched = function (ctx, logger, nk, matches) {
+    // Expect exactly 2 players — validate before proceeding
+    if (matches.length !== 2) {
+        logger.error("matchmakerMatched: expected 2 players, got %d — aborting", matches.length);
+        return;
+    }
+    // Read gameMode from the first player's string properties
+    // Both players submitted the same gameMode, so reading one is enough
+    var gameMode = "classic";
+    var props = matches[0].properties;
+    if (props && props["gameMode"] === "timed") {
+        gameMode = "timed";
+    }
+    // Create the authoritative match with gameMode as a param
+    var matchId = nk.matchCreate(MODULE_NAME, { gameMode: gameMode });
+    logger.info("Matchmaker paired %s vs %s — match %s (mode: %s)", matches[0].presence.username, matches[1].presence.username, matchId, gameMode);
+    // Returning matchId tells Nakama to send it to both clients automatically
+    return matchId;
+};
+// ─── RPC: createRoom ──────────────────────────────────────────────────────────
+// Creates a named match and returns the matchId the client uses to join.
+// Payload: { "gameMode": "classic" | "timed" }
+// Response: { "matchId": "<id>" }
+var rpcCreateRoom = function (ctx, logger, nk, payload) {
+    var gameMode = "classic";
+    if (payload && payload !== "") {
+        try {
+            var data = JSON.parse(payload);
+            if (data.gameMode === "timed") {
+                gameMode = "timed";
+            }
+        }
+        catch (e) {
+            logger.warn("createRoom: invalid JSON payload — defaulting to classic");
+        }
+    }
+    var matchId = nk.matchCreate(MODULE_NAME, { gameMode: gameMode });
+    logger.info("Room created: %s (mode: %s) by user: %s", matchId, gameMode, ctx.userId);
+    return JSON.stringify({ matchId: matchId });
+};
+// ─── RPC: listRooms ───────────────────────────────────────────────────────────
+// Returns open authoritative matches that have exactly 1 player (waiting for
+// a second player). Clients can join any of these directly by matchId.
+// Payload: optional { "gameMode": "classic" | "timed" } to filter by mode
+// Response: { "rooms": [{ matchId, gameMode, players }] }
+var rpcListRooms = function (ctx, logger, nk, payload) {
+    var filterMode = null;
+    if (payload && payload !== "") {
+        try {
+            var data = JSON.parse(payload);
+            if (data.gameMode === "classic" || data.gameMode === "timed") {
+                filterMode = data.gameMode;
+            }
+        }
+        catch (e) {
+            // No filter — return all modes
+        }
+    }
+    // List authoritative matches with exactly 1 player (room creator waiting)
+    var matches = nk.matchList(20, true, null, 1, 1, "*");
+    var rooms = [];
+    for (var i = 0; i < matches.length; i++) {
+        var m = matches[i];
+        var labelGameMode = "classic";
+        if (m.label) {
+            try {
+                var parsed = JSON.parse(m.label);
+                if (parsed.gameMode === "timed") {
+                    labelGameMode = "timed";
+                }
+            }
+            catch (e) {
+                // Malformed label — treat as classic
+            }
+        }
+        // Apply gameMode filter if requested
+        if (filterMode !== null && labelGameMode !== filterMode) {
+            continue;
+        }
+        rooms.push({
+            matchId: m.matchId,
+            gameMode: labelGameMode,
+            players: m.size,
+        });
+    }
+    logger.debug("listRooms: returning %d open rooms", rooms.length);
+    return JSON.stringify({ rooms: rooms });
+};
 // Nakama TypeScript Runtime — Entry Point
 // The Nakama runtime discovers this function by its global name: InitModule.
-var MODULE_NAME = "tictactoe";
 function InitModule(ctx, logger, nk, initializer) {
     logger.info("Tic-Tac-Toe module initializing...");
-    // Phase 2: Register the match handler
+    // Phase 2: Register the server-authoritative match handler
     initializer.registerMatch(MODULE_NAME, matchHandler);
     logger.info("Match handler registered: %s", MODULE_NAME);
-    // Phase 3: Matchmaking hooks registered here
+    // Phase 3: Register matchmaking hook and room RPCs
+    initializer.registerMatchmakerMatched(matchmakerMatched);
+    logger.info("Matchmaker hook registered");
+    initializer.registerRpc(RPC_CREATE_ROOM, rpcCreateRoom);
+    logger.info("RPC registered: %s", RPC_CREATE_ROOM);
+    initializer.registerRpc(RPC_LIST_ROOMS, rpcListRooms);
+    logger.info("RPC registered: %s", RPC_LIST_ROOMS);
     // Phase 6: Leaderboard RPCs registered here
     logger.info("Tic-Tac-Toe module initialized.");
 }
