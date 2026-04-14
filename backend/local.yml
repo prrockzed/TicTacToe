@@ -1,0 +1,13 @@
+# Nakama local development configuration
+name: nakama1
+
+logger:
+  level: "DEBUG"
+
+console:
+  username: admin
+  password: password
+
+runtime:
+  path: "/nakama/data/build"
+  js_entrypoint: "index.js"

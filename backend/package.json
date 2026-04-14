@@ -1,0 +1,13 @@
+{
+  "name": "tictactoe-nakama-backend",
+  "version": "1.0.0",
+  "description": "Nakama TypeScript runtime for Tic-Tac-Toe",
+  "scripts": {
+    "build": "npx tsc",
+    "watch": "npx tsc --watch"
+  },
+  "devDependencies": {
+    "nakama-runtime": "github:heroiclabs/nakama-common#master",
+    "typescript": "^5.4.5"
+  }
+}
