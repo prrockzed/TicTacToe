@@ -46,5 +46,9 @@ const TIMED_MODE_TURN_SECONDS = 30;
 const MODULE_NAME = "tictactoe";
 
 // RPC function IDs — registered in InitModule and called by the frontend
-const RPC_CREATE_ROOM = "createRoom";
-const RPC_LIST_ROOMS  = "listRooms";
+const RPC_CREATE_ROOM      = "createRoom";
+const RPC_LIST_ROOMS       = "listRooms";
+const RPC_GET_LEADERBOARD  = "getLeaderboard";
+
+// Leaderboard
+const LEADERBOARD_ID = "tictactoe_wins";

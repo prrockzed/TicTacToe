@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { Session, Socket } from "@heroiclabs/nakama-js";
 import { nakamaClient } from "../nakama";
 import { OpCode, type GameMode } from "../types";
+import Leaderboard from "./Leaderboard";
 
 interface Props {
   session:      Session;
@@ -10,7 +11,7 @@ interface Props {
   onLogout:     () => void;
 }
 
-type Tab         = "find" | "create" | "join";
+type Tab         = "find" | "create" | "join" | "ranks";
 type LobbyStatus = "idle" | "searching" | "waiting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
                 ["find",   "Find Match"],
                 ["create", "Create Room"],
                 ["join",   "Join Room"],
+                ["ranks",  "Rankings"],
               ] as [Tab, string][]
             ).map(([t, label]) => (
               <button
@@ -390,6 +392,11 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
                   {status === "searching" ? "Joining…" : "Join Room"}
                 </button>
               </div>
+            )}
+
+            {/* ── RANKINGS ── */}
+            {tab === "ranks" && (
+              <Leaderboard session={session} />
             )}
 
           </div>

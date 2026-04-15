@@ -193,6 +193,11 @@ const matchLeave: nkruntime.MatchLeaveFunction = function (
       gs.status = "finished";
       gs.winner = winnerId;
 
+      var forfeitWinner = gs.players[winnerId];
+      if (forfeitWinner) {
+        recordWin(nk, logger, winnerId, forfeitWinner.username);
+      }
+
       dispatcher.broadcastMessage(
         OpCode.GAME_OVER,
         JSON.stringify({
@@ -254,6 +259,11 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
       const winnerId = getOpponentId(gs, loserId);
       gs.status = "finished";
       gs.winner = winnerId;
+
+      var timeoutWinner = gs.players[winnerId];
+      if (timeoutWinner) {
+        recordWin(nk, logger, winnerId, timeoutWinner.username);
+      }
 
       dispatcher.broadcastMessage(
         OpCode.GAME_OVER,
@@ -350,6 +360,11 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
 
       gs.status = "finished";
       gs.winner = winnerId;
+
+      var matchWinner = gs.players[winnerId];
+      if (matchWinner) {
+        recordWin(nk, logger, winnerId, matchWinner.username);
+      }
 
       broadcastState(dispatcher, gs);
 

@@ -25,6 +25,59 @@ var MODULE_NAME = "tictactoe";
 // RPC function IDs — registered in InitModule and called by the frontend
 var RPC_CREATE_ROOM = "createRoom";
 var RPC_LIST_ROOMS = "listRooms";
+var RPC_GET_LEADERBOARD = "getLeaderboard";
+// Leaderboard
+var LEADERBOARD_ID = "tictactoe_wins";
+// Leaderboard system for Tic-Tac-Toe.
+// Uses Nakama's built-in leaderboard API to track wins per player.
+// All declarations are global — no ES module exports (outFile bundling).
+// Called from InitModule to ensure the leaderboard exists before any match runs.
+function initLeaderboard(nk, logger) {
+    try {
+        nk.leaderboardCreate(LEADERBOARD_ID, true, // authoritative — only server writes
+        "descending" /* nkruntime.SortOrder.DESCENDING */, // higher wins = better rank
+        "increment" /* nkruntime.Operator.INCREMENTAL */, // each write increments the score
+        null, // no automatic reset (lifetime leaderboard)
+        null, // no metadata
+        true // enable rank tracking
+        );
+        logger.info("Leaderboard ready: %s", LEADERBOARD_ID);
+    }
+    catch (e) {
+        // Nakama will throw if the leaderboard already exists with the same config.
+        // This is safe to ignore on server restarts.
+        logger.debug("Leaderboard init skipped (likely already exists): %s", e);
+    }
+}
+// Increment the win count for a player. Called by the match handler after every win.
+function recordWin(nk, logger, userId, username) {
+    try {
+        nk.leaderboardRecordWrite(LEADERBOARD_ID, userId, username, 1, 0, undefined);
+        logger.debug("Win recorded: %s (%s)", username, userId);
+    }
+    catch (e) {
+        logger.warn("Failed to record win for %s: %s", username, e);
+    }
+}
+// RPC: getLeaderboard
+// Returns the global top-10 and the caller's own record (even if outside top 10).
+var rpcGetLeaderboard = function (ctx, logger, nk, _payload) {
+    var _a;
+    try {
+        // Single call: top-10 records + caller's own record in ownerRecords
+        var result = nk.leaderboardRecordsList(LEADERBOARD_ID, ctx.userId ? [ctx.userId] : undefined, 10, undefined, 0);
+        return JSON.stringify({
+            records: (_a = result.records) !== null && _a !== void 0 ? _a : [],
+            ownRecord: (result.ownerRecords && result.ownerRecords.length > 0)
+                ? result.ownerRecords[0]
+                : null,
+        });
+    }
+    catch (e) {
+        logger.error("rpcGetLeaderboard error: %s", e);
+        return JSON.stringify({ records: [], ownRecord: null });
+    }
+};
 // Nakama Match Handler — server-authoritative Tic-Tac-Toe logic.
 // The client only sends OpCode.MAKE_MOVE with a position (0-8).
 // The server validates, applies, and broadcasts the canonical GameState.
@@ -140,6 +193,10 @@ var matchLeave = function (ctx, logger, nk, dispatcher, tick, state, presences) 
             var winnerId = getOpponentId(gs, p.userId);
             gs.status = "finished";
             gs.winner = winnerId;
+            var forfeitWinner = gs.players[winnerId];
+            if (forfeitWinner) {
+                recordWin(nk, logger, winnerId, forfeitWinner.username);
+            }
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                 winner: winnerId,
                 winnerSymbol: gs.players[winnerId]
@@ -171,6 +228,10 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
             var winnerId_1 = getOpponentId(gs, loserId);
             gs.status = "finished";
             gs.winner = winnerId_1;
+            var timeoutWinner = gs.players[winnerId_1];
+            if (timeoutWinner) {
+                recordWin(nk, logger, winnerId_1, timeoutWinner.username);
+            }
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                 winner: winnerId_1,
                 winnerSymbol: gs.players[winnerId_1]
@@ -236,6 +297,10 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
             }
             gs.status = "finished";
             gs.winner = winnerId;
+            var matchWinner = gs.players[winnerId];
+            if (matchWinner) {
+                recordWin(nk, logger, winnerId, matchWinner.username);
+            }
             broadcastState(dispatcher, gs);
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                 winner: winnerId,
@@ -404,6 +469,9 @@ function InitModule(ctx, logger, nk, initializer) {
     logger.info("RPC registered: %s", RPC_CREATE_ROOM);
     initializer.registerRpc(RPC_LIST_ROOMS, rpcListRooms);
     logger.info("RPC registered: %s", RPC_LIST_ROOMS);
-    // Phase 6: Leaderboard RPCs registered here
+    // Phase 6: Leaderboard
+    initLeaderboard(nk, logger);
+    initializer.registerRpc(RPC_GET_LEADERBOARD, rpcGetLeaderboard);
+    logger.info("RPC registered: %s", RPC_GET_LEADERBOARD);
     logger.info("Tic-Tac-Toe module initialized.");
 }

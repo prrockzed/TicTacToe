@@ -23,7 +23,11 @@ function InitModule(
   initializer.registerRpc(RPC_LIST_ROOMS, rpcListRooms);
   logger.info("RPC registered: %s", RPC_LIST_ROOMS);
 
-  // Phase 6: Leaderboard RPCs registered here
+  // Phase 6: Leaderboard
+  initLeaderboard(nk, logger);
+
+  initializer.registerRpc(RPC_GET_LEADERBOARD, rpcGetLeaderboard);
+  logger.info("RPC registered: %s", RPC_GET_LEADERBOARD);
 
   logger.info("Tic-Tac-Toe module initialized.");
 }

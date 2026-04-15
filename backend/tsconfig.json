@@ -1,6 +1,7 @@
 {
   "files": [
     "./src/types.ts",
+    "./src/leaderboard.ts",
     "./src/match.ts",
     "./src/matchmaker.ts",
     "./src/main.ts"
