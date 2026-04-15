@@ -265,6 +265,10 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
         if (gs.timerEnabled) {
             gs.turnTimeRemaining = TIMED_MODE_TURN_SECONDS;
         }
+    }
+    // Broadcast state every tick so late-mounting clients (GameBoard) always
+    // receive the current state within 1 second of joining.
+    if (gs.status === "playing") {
         broadcastState(dispatcher, gs);
     }
     return { state: gs };
