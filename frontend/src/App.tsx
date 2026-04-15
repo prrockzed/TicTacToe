@@ -4,6 +4,7 @@ import { Session as NakamaSession } from "@heroiclabs/nakama-js";
 import { nakamaClient, nakamaSsl } from "./nakama";
 import AuthScreen from "./components/AuthScreen";
 import Lobby from "./components/Lobby";
+import GameBoard from "./components/GameBoard";
 import type { GameMode, Screen } from "./types";
 import "./index.css";
 
@@ -118,28 +119,15 @@ export default function App() {
     );
   }
 
-  if (screen === "game") {
-    // Phase 5 replaces this placeholder with the full GameBoard component
+  if (screen === "game" && appState.session && appState.socket && appState.matchId) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center max-w-sm w-full">
-          <div className="text-4xl mb-4 select-none">✕ ○</div>
-          <h2 className="text-xl font-bold mb-1">Game Starting…</h2>
-          <p className="text-gray-500 text-xs mb-6">
-            Mode: <span className="text-gray-300">{appState.gameMode}</span>
-          </p>
-          <p className="text-gray-600 text-xs break-all font-mono mb-6">
-            {appState.matchId}
-          </p>
-          <button
-            onClick={handleGameOver}
-            className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300
-                       font-medium py-2 rounded-xl transition-colors text-sm"
-          >
-            Back to Lobby
-          </button>
-        </div>
-      </div>
+      <GameBoard
+        session={appState.session}
+        socket={appState.socket}
+        matchId={appState.matchId}
+        gameMode={appState.gameMode}
+        onGameOver={handleGameOver}
+      />
     );
   }
 
