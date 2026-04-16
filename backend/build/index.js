@@ -18,6 +18,7 @@ var OpCode = {
     TIMER_UPDATE: 4, // reserved
     PLAYER_JOINED: 5, // Server → Client : player info
     PLAYER_LEFT: 6, // Server → Client : player disconnected
+    RESIGN: 7, // Client → Server : player voluntarily resigns
 };
 var WIN_LINES = [
     [0, 1, 2], // top row
@@ -259,6 +260,27 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
     // ── Process incoming messages ───────────────────────────────────────────────
     for (var i = 0; i < messages.length; i++) {
         var msg = messages[i];
+        // ── Handle resign ────────────────────────────────────────────────────────
+        if (msg.opCode === OpCode.RESIGN) {
+            if (gs.status !== "playing")
+                continue;
+            var loserId = msg.sender.userId;
+            var winnerId_2 = getOpponentId(gs, loserId);
+            gs.status = "finished";
+            gs.winner = winnerId_2;
+            var resignWinner = gs.players[winnerId_2];
+            if (resignWinner) {
+                recordWin(nk, logger, winnerId_2, resignWinner.username);
+            }
+            dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
+                winner: winnerId_2,
+                winnerSymbol: gs.players[winnerId_2] ? gs.players[winnerId_2].symbol : null,
+                reason: "resign",
+                board: gs.board,
+            }), null, null, true);
+            logger.info("Game over (resign) — %s resigned, winner: %s", gs.players[loserId] ? gs.players[loserId].username : loserId, gs.players[winnerId_2] ? gs.players[winnerId_2].username : winnerId_2);
+            return { state: gs };
+        }
         if (msg.opCode !== OpCode.MAKE_MOVE) {
             continue; // ignore unknown opcodes
         }

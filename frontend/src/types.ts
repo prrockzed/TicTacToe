@@ -23,7 +23,7 @@ export interface GameState {
 export interface GameOverPayload {
   winner:       string | null;            // userId | null (draw)
   winnerSymbol: "X" | "O" | null;
-  reason:       "win" | "draw" | "forfeit" | "timeout";
+  reason:       "win" | "draw" | "forfeit" | "timeout" | "resign";
   board:        (string | null)[];
 }
 
@@ -35,4 +35,5 @@ export const OpCode = {
   TIMER_UPDATE:  4,
   PLAYER_JOINED: 5,
   PLAYER_LEFT:   6,
+  RESIGN:        7,
 } as const;

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { Session, Socket } from "@heroiclabs/nakama-js";
 import { useMatch } from "../hooks/useMatch";
+import { OpCode } from "../types";
 import type { TimeControl } from "../types";
 
 interface Props {
@@ -35,6 +37,12 @@ function formatClock(s: number): string {
 
 export default function GameBoard({ session, socket, matchId, timeControl: propTC, onGameOver }: Props) {
   const { gameState, gameOver, sendMove } = useMatch(socket, matchId);
+  const [confirmResign, setConfirmResign] = useState(false);
+
+  function handleResign() {
+    socket.sendMatchState(matchId, OpCode.RESIGN, "{}");
+    setConfirmResign(false);
+  }
 
   const myUserId   = session.user_id ?? "";
   const me         = gameState?.players[myUserId];
@@ -61,12 +69,14 @@ export default function GameBoard({ session, socket, matchId, timeControl: propT
       resultSub =
         gameOver.reason === "forfeit" ? "Opponent forfeited." :
         gameOver.reason === "timeout" ? "Opponent ran out of time." :
+        gameOver.reason === "resign"  ? "Opponent resigned." :
         "Well played!";
     } else {
       resultTitle = "You Lose";
       resultSub =
         gameOver.reason === "forfeit" ? "You forfeited." :
         gameOver.reason === "timeout" ? "You ran out of time." :
+        gameOver.reason === "resign"  ? "You resigned." :
         "Better luck next time.";
     }
   }
@@ -163,6 +173,39 @@ export default function GameBoard({ session, socket, matchId, timeControl: propT
               ? "Your turn"
               : "Opponent is thinking…"}
           </p>
+        )}
+
+        {/* Resign button — only while game is live */}
+        {gameState.status === "playing" && !gameOver && (
+          <div className="flex justify-center">
+            {confirmResign ? (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 text-xs">Resign?</span>
+                <button
+                  onClick={handleResign}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold text-white transition-all active:scale-95"
+                  style={{ background: "rgba(239,68,68,0.8)" }}
+                >
+                  Yes, resign
+                </button>
+                <button
+                  onClick={() => setConfirmResign(false)}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold transition-all active:scale-95"
+                  style={{ background: "rgba(255,255,255,0.08)", color: "#9ca3af" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmResign(true)}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95"
+                style={{ background: "rgba(255,255,255,0.06)", color: "#6b7280", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                Resign
+              </button>
+            )}
+          </div>
         )}
 
         {/* Result card */}

@@ -36,6 +36,7 @@ const OpCode = {
   TIMER_UPDATE:  4,  // reserved
   PLAYER_JOINED: 5,  // Server → Client : player info
   PLAYER_LEFT:   6,  // Server → Client : player disconnected
+  RESIGN:        7,  // Client → Server : player voluntarily resigns
 } as const;
 
 const WIN_LINES: number[][] = [

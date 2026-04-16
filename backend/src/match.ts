@@ -286,6 +286,39 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
   for (var i = 0; i < messages.length; i++) {
     const msg = messages[i];
 
+    // ── Handle resign ────────────────────────────────────────────────────────
+    if (msg.opCode === OpCode.RESIGN) {
+      if (gs.status !== "playing") continue;
+
+      const loserId  = msg.sender.userId;
+      const winnerId = getOpponentId(gs, loserId);
+      gs.status = "finished";
+      gs.winner = winnerId;
+
+      var resignWinner = gs.players[winnerId];
+      if (resignWinner) {
+        recordWin(nk, logger, winnerId, resignWinner.username);
+      }
+
+      dispatcher.broadcastMessage(
+        OpCode.GAME_OVER,
+        JSON.stringify({
+          winner:       winnerId,
+          winnerSymbol: gs.players[winnerId] ? gs.players[winnerId].symbol : null,
+          reason:       "resign",
+          board:        gs.board,
+        }),
+        null, null, true
+      );
+
+      logger.info(
+        "Game over (resign) — %s resigned, winner: %s",
+        gs.players[loserId] ? gs.players[loserId].username : loserId,
+        gs.players[winnerId] ? gs.players[winnerId].username : winnerId
+      );
+      return { state: gs };
+    }
+
     if (msg.opCode !== OpCode.MAKE_MOVE) {
       continue; // ignore unknown opcodes
     }
