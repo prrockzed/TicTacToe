@@ -1,11 +1,21 @@
 "use strict";
 // Shared types for the Tic-Tac-Toe Nakama runtime.
 // No ES module imports/exports — all declarations are global for outFile bundling.
+// Returns total seconds for a given time control. 0 = no limit.
+function getTimeControlSeconds(tc) {
+    if (tc === "10s")
+        return 10;
+    if (tc === "30s")
+        return 30;
+    if (tc === "1m")
+        return 60;
+    return 0; // endless
+}
 var OpCode = {
     GAME_STATE: 1, // Server → Client : full game state
     MAKE_MOVE: 2, // Client → Server : { position: 0-8 }
-    GAME_OVER: 3, // Server → Client : { winner, board }
-    TIMER_UPDATE: 4, // Server → Client : { timeRemaining }
+    GAME_OVER: 3, // Server → Client : { winner, winnerSymbol, reason, board }
+    TIMER_UPDATE: 4, // reserved
     PLAYER_JOINED: 5, // Server → Client : player info
     PLAYER_LEFT: 6, // Server → Client : player disconnected
 };
@@ -16,10 +26,9 @@ var WIN_LINES = [
     [0, 3, 6], // left column
     [1, 4, 7], // middle column
     [2, 5, 8], // right column
-    [0, 4, 8], // diagonal top-left to bottom-right
-    [2, 4, 6], // diagonal top-right to bottom-left
+    [0, 4, 8], // diagonal ↘
+    [2, 4, 6], // diagonal ↙
 ];
-var TIMED_MODE_TURN_SECONDS = 30;
 // Module name used to register the match handler — shared across all files
 var MODULE_NAME = "tictactoe";
 // RPC function IDs — registered in InitModule and called by the frontend
@@ -82,7 +91,7 @@ var rpcGetLeaderboard = function (ctx, logger, nk, _payload) {
 // The client only sends OpCode.MAKE_MOVE with a position (0-8).
 // The server validates, applies, and broadcasts the canonical GameState.
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function createInitialState(gameMode) {
+function createInitialState(timeControl) {
     return {
         board: [null, null, null, null, null, null, null, null, null],
         players: {},
@@ -90,9 +99,8 @@ function createInitialState(gameMode) {
         currentTurn: "",
         status: "waiting",
         winner: null,
-        gameMode: gameMode,
-        timerEnabled: gameMode === "timed",
-        turnTimeRemaining: TIMED_MODE_TURN_SECONDS,
+        timeControl: timeControl,
+        playerTimes: {},
     };
 }
 function checkWinner(board) {
@@ -127,11 +135,12 @@ function broadcastState(dispatcher, state) {
 }
 // ─── matchInit ───────────────────────────────────────────────────────────────
 var matchInit = function (ctx, logger, nk, params) {
-    var gameMode = params["gameMode"] === "timed" ? "timed" : "classic";
-    var state = createInitialState(gameMode);
-    // Label is used by matchmaker and listing — encode gameMode into it
-    var label = JSON.stringify({ gameMode: gameMode });
-    logger.debug("Match initialised — mode: %s", gameMode);
+    var tc = params["timeControl"];
+    var timeControl = (tc === "10s" || tc === "30s" || tc === "1m") ? tc : "endless";
+    var state = createInitialState(timeControl);
+    // Label is used by matchmaker and listing — encode timeControl into it
+    var label = JSON.stringify({ timeControl: timeControl });
+    logger.debug("Match initialised — timeControl: %s", timeControl);
     return {
         state: state,
         tickRate: 1, // 1 tick/second — enough for a turn-based game + timer countdown
@@ -173,10 +182,13 @@ var matchJoin = function (ctx, logger, nk, dispatcher, tick, state, presences) {
     if (gs.playerOrder.length === 2) {
         gs.status = "playing";
         gs.currentTurn = gs.playerOrder[0]; // X goes first
-        if (gs.timerEnabled) {
-            gs.turnTimeRemaining = TIMED_MODE_TURN_SECONDS;
+        // Initialise per-player clocks
+        var seconds = getTimeControlSeconds(gs.timeControl);
+        if (seconds > 0) {
+            gs.playerTimes[gs.playerOrder[0]] = seconds;
+            gs.playerTimes[gs.playerOrder[1]] = seconds;
         }
-        logger.info("Game started — %s vs %s", gs.playerOrder[0], gs.playerOrder[1]);
+        logger.info("Game started — %s vs %s (timeControl: %s)", gs.playerOrder[0], gs.playerOrder[1], gs.timeControl);
         broadcastState(dispatcher, gs);
     }
     return { state: gs };
@@ -217,31 +229,30 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
     if (gs.status === "finished" || gs.playerOrder.length === 0) {
         return null; // returning null ends the match
     }
-    // ── Timer countdown (timed mode only) ──────────────────────────────────────
-    if (gs.status === "playing" && gs.timerEnabled) {
-        gs.turnTimeRemaining -= 1; // tickRate = 1 tick/sec
-        dispatcher.broadcastMessage(OpCode.TIMER_UPDATE, JSON.stringify({ timeRemaining: gs.turnTimeRemaining }), null, null, false // unreliable ok for frequent timer ticks
-        );
-        // Time's up — current player forfeits their turn (loses the match)
-        if (gs.turnTimeRemaining <= 0) {
-            var loserId = gs.currentTurn;
-            var winnerId_1 = getOpponentId(gs, loserId);
-            gs.status = "finished";
-            gs.winner = winnerId_1;
-            var timeoutWinner = gs.players[winnerId_1];
-            if (timeoutWinner) {
-                recordWin(nk, logger, winnerId_1, timeoutWinner.username);
+    // ── Per-player clock (timed modes only) ────────────────────────────────────
+    if (gs.status === "playing" && gs.timeControl !== "endless") {
+        // Decrement only the current player's total time
+        if (gs.playerTimes[gs.currentTurn] !== undefined) {
+            gs.playerTimes[gs.currentTurn] -= 1;
+            if (gs.playerTimes[gs.currentTurn] <= 0) {
+                gs.playerTimes[gs.currentTurn] = 0;
+                var loserId = gs.currentTurn;
+                var winnerId_1 = getOpponentId(gs, loserId);
+                gs.status = "finished";
+                gs.winner = winnerId_1;
+                var timeoutWinner = gs.players[winnerId_1];
+                if (timeoutWinner) {
+                    recordWin(nk, logger, winnerId_1, timeoutWinner.username);
+                }
+                dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
+                    winner: winnerId_1,
+                    winnerSymbol: gs.players[winnerId_1] ? gs.players[winnerId_1].symbol : null,
+                    reason: "timeout",
+                    board: gs.board,
+                }), null, null, true);
+                logger.info("Game over (timeout) — winner: %s", gs.players[winnerId_1] ? gs.players[winnerId_1].username : winnerId_1);
+                return { state: gs };
             }
-            dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
-                winner: winnerId_1,
-                winnerSymbol: gs.players[winnerId_1]
-                    ? gs.players[winnerId_1].symbol
-                    : null,
-                reason: "timeout",
-                board: gs.board,
-            }), null, null, true);
-            logger.info("Game over (timeout) — winner: %s", gs.players[winnerId_1] ? gs.players[winnerId_1].username : winnerId_1);
-            return { state: gs };
         }
     }
     // ── Process incoming messages ───────────────────────────────────────────────
@@ -327,9 +338,6 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
         }
         // ── Advance turn ──────────────────────────────────────────────────────────
         gs.currentTurn = getOpponentId(gs, msg.sender.userId);
-        if (gs.timerEnabled) {
-            gs.turnTimeRemaining = TIMED_MODE_TURN_SECONDS;
-        }
     }
     // Broadcast state every tick so late-mounting clients (GameBoard) always
     // receive the current state within 1 second of joining.
@@ -360,97 +368,79 @@ var matchHandler = {
 // Nakama Matchmaking System
 //
 // Flows supported:
-//  1. Auto-matchmaking  — client adds a ticket; when 2 players match,
-//                         matchmakerMatched creates a match and returns its ID.
+//  1. Auto-matchmaking  — client adds a ticket; when 2 players with the same
+//                         timeControl match, matchmakerMatched creates the match.
 //  2. Create room       — rpcCreateRoom creates a named match, returns matchId.
 //  3. List rooms        — rpcListRooms returns open matches (1 player waiting).
 // ─── matchmakerMatched ────────────────────────────────────────────────────────
-// Called by Nakama when the matchmaker finds exactly 2 compatible players.
-// We create the authoritative match and return its ID so both clients join it.
 var matchmakerMatched = function (ctx, logger, nk, matches) {
-    // Expect exactly 2 players — validate before proceeding
     if (matches.length !== 2) {
         logger.error("matchmakerMatched: expected 2 players, got %d — aborting", matches.length);
         return;
     }
-    // Read gameMode from the first player's string properties
-    // Both players submitted the same gameMode, so reading one is enough
-    var gameMode = "classic";
+    // Both players submitted the same timeControl (enforced by query), so read from first
     var props = matches[0].properties;
-    if (props && props["gameMode"] === "timed") {
-        gameMode = "timed";
-    }
-    // Create the authoritative match with gameMode as a param
-    var matchId = nk.matchCreate(MODULE_NAME, { gameMode: gameMode });
-    logger.info("Matchmaker paired %s vs %s — match %s (mode: %s)", matches[0].presence.username, matches[1].presence.username, matchId, gameMode);
-    // Returning matchId tells Nakama to send it to both clients automatically
+    var tc = props ? props["timeControl"] : undefined;
+    var timeControl = (tc === "10s" || tc === "30s" || tc === "1m") ? tc : "endless";
+    var matchId = nk.matchCreate(MODULE_NAME, { timeControl: timeControl });
+    logger.info("Matchmaker paired %s vs %s — match %s (timeControl: %s)", matches[0].presence.username, matches[1].presence.username, matchId, timeControl);
     return matchId;
 };
 // ─── RPC: createRoom ──────────────────────────────────────────────────────────
-// Creates a named match and returns the matchId the client uses to join.
-// Payload: { "gameMode": "classic" | "timed" }
+// Payload:  { "timeControl": "10s" | "30s" | "1m" | "endless" }
 // Response: { "matchId": "<id>" }
 var rpcCreateRoom = function (ctx, logger, nk, payload) {
-    var gameMode = "classic";
+    var timeControl = "endless";
     if (payload && payload !== "") {
         try {
             var data = JSON.parse(payload);
-            if (data.gameMode === "timed") {
-                gameMode = "timed";
+            var tc = data.timeControl;
+            if (tc === "10s" || tc === "30s" || tc === "1m" || tc === "endless") {
+                timeControl = tc;
             }
         }
         catch (e) {
-            logger.warn("createRoom: invalid JSON payload — defaulting to classic");
+            logger.warn("createRoom: invalid JSON payload — defaulting to endless");
         }
     }
-    var matchId = nk.matchCreate(MODULE_NAME, { gameMode: gameMode });
-    logger.info("Room created: %s (mode: %s) by user: %s", matchId, gameMode, ctx.userId);
+    var matchId = nk.matchCreate(MODULE_NAME, { timeControl: timeControl });
+    logger.info("Room created: %s (timeControl: %s) by user: %s", matchId, timeControl, ctx.userId);
     return JSON.stringify({ matchId: matchId });
 };
 // ─── RPC: listRooms ───────────────────────────────────────────────────────────
-// Returns open authoritative matches that have exactly 1 player (waiting for
-// a second player). Clients can join any of these directly by matchId.
-// Payload: optional { "gameMode": "classic" | "timed" } to filter by mode
-// Response: { "rooms": [{ matchId, gameMode, players }] }
+// Payload:  optional { "timeControl": "10s" | "30s" | "1m" | "endless" }
+// Response: { "rooms": [{ matchId, timeControl, players }] }
 var rpcListRooms = function (ctx, logger, nk, payload) {
-    var filterMode = null;
+    var filterTimeControl = null;
     if (payload && payload !== "") {
         try {
             var data = JSON.parse(payload);
-            if (data.gameMode === "classic" || data.gameMode === "timed") {
-                filterMode = data.gameMode;
-            }
+            if (data.timeControl)
+                filterTimeControl = data.timeControl;
         }
         catch (e) {
-            // No filter — return all modes
+            // No filter — return all
         }
     }
-    // List authoritative matches with exactly 1 player (room creator waiting)
     var matches = nk.matchList(20, true, null, 1, 1, "*");
     var rooms = [];
     for (var i = 0; i < matches.length; i++) {
         var m = matches[i];
-        var labelGameMode = "classic";
+        var labelTimeControl = "endless";
         if (m.label) {
             try {
                 var parsed = JSON.parse(m.label);
-                if (parsed.gameMode === "timed") {
-                    labelGameMode = "timed";
-                }
+                if (parsed.timeControl)
+                    labelTimeControl = parsed.timeControl;
             }
             catch (e) {
-                // Malformed label — treat as classic
+                // Malformed label
             }
         }
-        // Apply gameMode filter if requested
-        if (filterMode !== null && labelGameMode !== filterMode) {
+        if (filterTimeControl !== null && labelTimeControl !== filterTimeControl) {
             continue;
         }
-        rooms.push({
-            matchId: m.matchId,
-            gameMode: labelGameMode,
-            players: m.size,
-        });
+        rooms.push({ matchId: m.matchId, timeControl: labelTimeControl, players: m.size });
     }
     logger.debug("listRooms: returning %d open rooms", rooms.length);
     return JSON.stringify({ rooms: rooms });

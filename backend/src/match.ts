@@ -4,7 +4,7 @@
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function createInitialState(gameMode: "classic" | "timed"): GameState {
+function createInitialState(timeControl: string): GameState {
   return {
     board: [null, null, null, null, null, null, null, null, null],
     players: {},
@@ -12,9 +12,8 @@ function createInitialState(gameMode: "classic" | "timed"): GameState {
     currentTurn: "",
     status: "waiting",
     winner: null,
-    gameMode: gameMode,
-    timerEnabled: gameMode === "timed",
-    turnTimeRemaining: TIMED_MODE_TURN_SECONDS,
+    timeControl: timeControl as TimeControl,
+    playerTimes: {},
   };
 }
 
@@ -65,15 +64,16 @@ const matchInit: nkruntime.MatchInitFunction = function (
   nk: nkruntime.Nakama,
   params: { [key: string]: string }
 ): { state: nkruntime.MatchState; tickRate: number; label: string } {
-  const gameMode =
-    params["gameMode"] === "timed" ? "timed" : "classic";
+  const tc = params["timeControl"];
+  const timeControl: TimeControl =
+    (tc === "10s" || tc === "30s" || tc === "1m") ? tc : "endless";
 
-  const state: GameState = createInitialState(gameMode);
+  const state: GameState = createInitialState(timeControl);
 
-  // Label is used by matchmaker and listing — encode gameMode into it
-  const label = JSON.stringify({ gameMode });
+  // Label is used by matchmaker and listing — encode timeControl into it
+  const label = JSON.stringify({ timeControl });
 
-  logger.debug("Match initialised — mode: %s", gameMode);
+  logger.debug("Match initialised — timeControl: %s", timeControl);
 
   return {
     state,
@@ -152,10 +152,15 @@ const matchJoin: nkruntime.MatchJoinFunction = function (
   if (gs.playerOrder.length === 2) {
     gs.status = "playing";
     gs.currentTurn = gs.playerOrder[0]; // X goes first
-    if (gs.timerEnabled) {
-      gs.turnTimeRemaining = TIMED_MODE_TURN_SECONDS;
+
+    // Initialise per-player clocks
+    const seconds = getTimeControlSeconds(gs.timeControl);
+    if (seconds > 0) {
+      gs.playerTimes[gs.playerOrder[0]] = seconds;
+      gs.playerTimes[gs.playerOrder[1]] = seconds;
     }
-    logger.info("Game started — %s vs %s", gs.playerOrder[0], gs.playerOrder[1]);
+
+    logger.info("Game started — %s vs %s (timeControl: %s)", gs.playerOrder[0], gs.playerOrder[1], gs.timeControl);
     broadcastState(dispatcher, gs);
   }
 
@@ -241,50 +246,39 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
     return null; // returning null ends the match
   }
 
-  // ── Timer countdown (timed mode only) ──────────────────────────────────────
-  if (gs.status === "playing" && gs.timerEnabled) {
-    gs.turnTimeRemaining -= 1; // tickRate = 1 tick/sec
+  // ── Per-player clock (timed modes only) ────────────────────────────────────
+  if (gs.status === "playing" && gs.timeControl !== "endless") {
+    // Decrement only the current player's total time
+    if (gs.playerTimes[gs.currentTurn] !== undefined) {
+      gs.playerTimes[gs.currentTurn] -= 1;
 
-    dispatcher.broadcastMessage(
-      OpCode.TIMER_UPDATE,
-      JSON.stringify({ timeRemaining: gs.turnTimeRemaining }),
-      null,
-      null,
-      false // unreliable ok for frequent timer ticks
-    );
+      if (gs.playerTimes[gs.currentTurn] <= 0) {
+        gs.playerTimes[gs.currentTurn] = 0;
 
-    // Time's up — current player forfeits their turn (loses the match)
-    if (gs.turnTimeRemaining <= 0) {
-      const loserId = gs.currentTurn;
-      const winnerId = getOpponentId(gs, loserId);
-      gs.status = "finished";
-      gs.winner = winnerId;
+        const loserId  = gs.currentTurn;
+        const winnerId = getOpponentId(gs, loserId);
+        gs.status = "finished";
+        gs.winner = winnerId;
 
-      var timeoutWinner = gs.players[winnerId];
-      if (timeoutWinner) {
-        recordWin(nk, logger, winnerId, timeoutWinner.username);
+        var timeoutWinner = gs.players[winnerId];
+        if (timeoutWinner) {
+          recordWin(nk, logger, winnerId, timeoutWinner.username);
+        }
+
+        dispatcher.broadcastMessage(
+          OpCode.GAME_OVER,
+          JSON.stringify({
+            winner:       winnerId,
+            winnerSymbol: gs.players[winnerId] ? gs.players[winnerId].symbol : null,
+            reason:       "timeout",
+            board:        gs.board,
+          }),
+          null, null, true
+        );
+
+        logger.info("Game over (timeout) — winner: %s", gs.players[winnerId] ? gs.players[winnerId].username : winnerId);
+        return { state: gs };
       }
-
-      dispatcher.broadcastMessage(
-        OpCode.GAME_OVER,
-        JSON.stringify({
-          winner: winnerId,
-          winnerSymbol: gs.players[winnerId]
-            ? gs.players[winnerId].symbol
-            : null,
-          reason: "timeout",
-          board: gs.board,
-        }),
-        null,
-        null,
-        true
-      );
-
-      logger.info(
-        "Game over (timeout) — winner: %s",
-        gs.players[winnerId] ? gs.players[winnerId].username : winnerId
-      );
-      return { state: gs };
     }
   }
 
@@ -415,10 +409,6 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
 
     // ── Advance turn ──────────────────────────────────────────────────────────
     gs.currentTurn = getOpponentId(gs, msg.sender.userId);
-
-    if (gs.timerEnabled) {
-      gs.turnTimeRemaining = TIMED_MODE_TURN_SECONDS;
-    }
   }
 
   // Broadcast state every tick so late-mounting clients (GameBoard) always

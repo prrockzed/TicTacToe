@@ -1,14 +1,12 @@
 // Nakama Matchmaking System
 //
 // Flows supported:
-//  1. Auto-matchmaking  — client adds a ticket; when 2 players match,
-//                         matchmakerMatched creates a match and returns its ID.
+//  1. Auto-matchmaking  — client adds a ticket; when 2 players with the same
+//                         timeControl match, matchmakerMatched creates the match.
 //  2. Create room       — rpcCreateRoom creates a named match, returns matchId.
 //  3. List rooms        — rpcListRooms returns open matches (1 player waiting).
 
 // ─── matchmakerMatched ────────────────────────────────────────────────────────
-// Called by Nakama when the matchmaker finds exactly 2 compatible players.
-// We create the authoritative match and return its ID so both clients join it.
 
 const matchmakerMatched: nkruntime.MatchmakerMatchedFunction = function (
   ctx: nkruntime.Context,
@@ -16,41 +14,32 @@ const matchmakerMatched: nkruntime.MatchmakerMatchedFunction = function (
   nk: nkruntime.Nakama,
   matches: nkruntime.MatchmakerResult[]
 ): string | void {
-  // Expect exactly 2 players — validate before proceeding
   if (matches.length !== 2) {
-    logger.error(
-      "matchmakerMatched: expected 2 players, got %d — aborting",
-      matches.length
-    );
+    logger.error("matchmakerMatched: expected 2 players, got %d — aborting", matches.length);
     return;
   }
 
-  // Read gameMode from the first player's string properties
-  // Both players submitted the same gameMode, so reading one is enough
-  let gameMode: "classic" | "timed" = "classic";
+  // Both players submitted the same timeControl (enforced by query), so read from first
   const props = matches[0].properties;
-  if (props && props["gameMode"] === "timed") {
-    gameMode = "timed";
-  }
+  const tc    = props ? props["timeControl"] : undefined;
+  const timeControl: TimeControl =
+    (tc === "10s" || tc === "30s" || tc === "1m") ? tc : "endless";
 
-  // Create the authoritative match with gameMode as a param
-  const matchId = nk.matchCreate(MODULE_NAME, { gameMode });
+  const matchId = nk.matchCreate(MODULE_NAME, { timeControl });
 
   logger.info(
-    "Matchmaker paired %s vs %s — match %s (mode: %s)",
+    "Matchmaker paired %s vs %s — match %s (timeControl: %s)",
     matches[0].presence.username,
     matches[1].presence.username,
     matchId,
-    gameMode
+    timeControl
   );
 
-  // Returning matchId tells Nakama to send it to both clients automatically
   return matchId;
 };
 
 // ─── RPC: createRoom ──────────────────────────────────────────────────────────
-// Creates a named match and returns the matchId the client uses to join.
-// Payload: { "gameMode": "classic" | "timed" }
+// Payload:  { "timeControl": "10s" | "30s" | "1m" | "endless" }
 // Response: { "matchId": "<id>" }
 
 const rpcCreateRoom: nkruntime.RpcFunction = function (
@@ -59,36 +48,30 @@ const rpcCreateRoom: nkruntime.RpcFunction = function (
   nk: nkruntime.Nakama,
   payload: string
 ): string {
-  let gameMode: "classic" | "timed" = "classic";
+  let timeControl: TimeControl = "endless";
 
   if (payload && payload !== "") {
     try {
-      const data: { gameMode?: string } = JSON.parse(payload);
-      if (data.gameMode === "timed") {
-        gameMode = "timed";
+      const data: { timeControl?: string } = JSON.parse(payload);
+      const tc = data.timeControl;
+      if (tc === "10s" || tc === "30s" || tc === "1m" || tc === "endless") {
+        timeControl = tc;
       }
     } catch (e) {
-      logger.warn("createRoom: invalid JSON payload — defaulting to classic");
+      logger.warn("createRoom: invalid JSON payload — defaulting to endless");
     }
   }
 
-  const matchId = nk.matchCreate(MODULE_NAME, { gameMode });
+  const matchId = nk.matchCreate(MODULE_NAME, { timeControl });
 
-  logger.info(
-    "Room created: %s (mode: %s) by user: %s",
-    matchId,
-    gameMode,
-    ctx.userId
-  );
+  logger.info("Room created: %s (timeControl: %s) by user: %s", matchId, timeControl, ctx.userId);
 
   return JSON.stringify({ matchId });
 };
 
 // ─── RPC: listRooms ───────────────────────────────────────────────────────────
-// Returns open authoritative matches that have exactly 1 player (waiting for
-// a second player). Clients can join any of these directly by matchId.
-// Payload: optional { "gameMode": "classic" | "timed" } to filter by mode
-// Response: { "rooms": [{ matchId, gameMode, players }] }
+// Payload:  optional { "timeControl": "10s" | "30s" | "1m" | "endless" }
+// Response: { "rooms": [{ matchId, timeControl, players }] }
 
 const rpcListRooms: nkruntime.RpcFunction = function (
   ctx: nkruntime.Context,
@@ -96,52 +79,41 @@ const rpcListRooms: nkruntime.RpcFunction = function (
   nk: nkruntime.Nakama,
   payload: string
 ): string {
-  let filterMode: string | null = null;
+  let filterTimeControl: string | null = null;
 
   if (payload && payload !== "") {
     try {
-      const data: { gameMode?: string } = JSON.parse(payload);
-      if (data.gameMode === "classic" || data.gameMode === "timed") {
-        filterMode = data.gameMode;
-      }
+      const data: { timeControl?: string } = JSON.parse(payload);
+      if (data.timeControl) filterTimeControl = data.timeControl;
     } catch (e) {
-      // No filter — return all modes
+      // No filter — return all
     }
   }
 
-  // List authoritative matches with exactly 1 player (room creator waiting)
   const matches = nk.matchList(20, true, null, 1, 1, "*");
 
-  const rooms: Array<{ matchId: string; gameMode: string; players: number }> = [];
+  const rooms: Array<{ matchId: string; timeControl: string; players: number }> = [];
 
   for (var i = 0; i < matches.length; i++) {
     var m = matches[i];
-    var labelGameMode = "classic";
+    var labelTimeControl = "endless";
 
     if (m.label) {
       try {
-        var parsed: { gameMode?: string } = JSON.parse(m.label);
-        if (parsed.gameMode === "timed") {
-          labelGameMode = "timed";
-        }
+        var parsed: { timeControl?: string } = JSON.parse(m.label);
+        if (parsed.timeControl) labelTimeControl = parsed.timeControl;
       } catch (e) {
-        // Malformed label — treat as classic
+        // Malformed label
       }
     }
 
-    // Apply gameMode filter if requested
-    if (filterMode !== null && labelGameMode !== filterMode) {
+    if (filterTimeControl !== null && labelTimeControl !== filterTimeControl) {
       continue;
     }
 
-    rooms.push({
-      matchId: m.matchId,
-      gameMode: labelGameMode,
-      players: m.size,
-    });
+    rooms.push({ matchId: m.matchId, timeControl: labelTimeControl, players: m.size });
   }
 
   logger.debug("listRooms: returning %d open rooms", rooms.length);
-
   return JSON.stringify({ rooms });
 };
