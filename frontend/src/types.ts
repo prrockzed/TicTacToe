@@ -1,7 +1,7 @@
 // Shared frontend types — mirrors the backend GameState structure
 
-export type GameMode = "classic" | "timed";
-export type Screen   = "auth" | "lobby" | "game";
+export type TimeControl = "10s" | "30s" | "1m" | "endless";
+export type Screen      = "auth" | "lobby" | "game";
 
 export interface PlayerInfo {
   userId:   string;
@@ -10,19 +10,18 @@ export interface PlayerInfo {
 }
 
 export interface GameState {
-  board:              (string | null)[];
-  players:            { [userId: string]: PlayerInfo };
-  playerOrder:        string[];
-  currentTurn:        string;
-  status:             "waiting" | "playing" | "finished";
-  winner:             string | null;    // userId | "draw" | null
-  gameMode:           GameMode;
-  timerEnabled:       boolean;
-  turnTimeRemaining:  number;
+  board:        (string | null)[];
+  players:      { [userId: string]: PlayerInfo };
+  playerOrder:  string[];
+  currentTurn:  string;
+  status:       "waiting" | "playing" | "finished";
+  winner:       string | null;
+  timeControl:  TimeControl;
+  playerTimes:  { [userId: string]: number };  // seconds remaining per player
 }
 
 export interface GameOverPayload {
-  winner:       string | null;   // userId | null (draw)
+  winner:       string | null;            // userId | null (draw)
   winnerSymbol: "X" | "O" | null;
   reason:       "win" | "draw" | "forfeit" | "timeout";
   board:        (string | null)[];

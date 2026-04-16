@@ -5,21 +5,21 @@ import { nakamaClient, nakamaSsl } from "./nakama";
 import AuthScreen from "./components/AuthScreen";
 import Lobby from "./components/Lobby";
 import GameBoard from "./components/GameBoard";
-import type { GameMode, Screen } from "./types";
+import type { TimeControl, Screen } from "./types";
 import "./index.css";
 
 interface AppState {
-  session:  Session | null;
-  socket:   Socket  | null;
-  matchId:  string  | null;
-  gameMode: GameMode;
+  session:     Session | null;
+  socket:      Socket  | null;
+  matchId:     string  | null;
+  timeControl: TimeControl;
 }
 
 const INITIAL_STATE: AppState = {
-  session:  null,
-  socket:   null,
-  matchId:  null,
-  gameMode: "classic",
+  session:     null,
+  socket:      null,
+  matchId:     null,
+  timeControl: "endless",
 };
 
 export default function App() {
@@ -55,7 +55,7 @@ export default function App() {
     socket
       .connect(session, false)
       .then(() => {
-        setAppState({ session, socket, matchId: null, gameMode: "classic" });
+        setAppState({ session, socket, matchId: null, timeControl: "endless" });
         setScreen("lobby");
       })
       .catch(() => {
@@ -69,12 +69,12 @@ export default function App() {
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
   const handleLogin = (session: Session, socket: Socket) => {
-    setAppState({ session, socket, matchId: null, gameMode: "classic" });
+    setAppState({ session, socket, matchId: null, timeControl: "endless" });
     setScreen("lobby");
   };
 
-  const handleMatchFound = (matchId: string, gameMode: GameMode) => {
-    setAppState(prev => ({ ...prev, matchId, gameMode }));
+  const handleMatchFound = (matchId: string, timeControl: TimeControl) => {
+    setAppState(prev => ({ ...prev, matchId, timeControl }));
     setScreen("game");
   };
 
@@ -125,7 +125,7 @@ export default function App() {
         session={appState.session}
         socket={appState.socket}
         matchId={appState.matchId}
-        gameMode={appState.gameMode}
+        timeControl={appState.timeControl}
         onGameOver={handleGameOver}
       />
     );

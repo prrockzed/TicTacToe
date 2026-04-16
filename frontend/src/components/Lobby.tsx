@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Session, Socket } from "@heroiclabs/nakama-js";
 import { nakamaClient } from "../nakama";
-import { OpCode, type GameMode } from "../types";
+import { OpCode, type TimeControl } from "../types";
 import Leaderboard from "./Leaderboard";
 
 interface Props {
   session:      Session;
   socket:       Socket;
-  onMatchFound: (matchId: string, gameMode: GameMode) => void;
+  onMatchFound: (matchId: string, timeControl: TimeControl) => void;
   onLogout:     () => void;
 }
 
@@ -16,29 +16,41 @@ type LobbyStatus = "idle" | "searching" | "waiting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function ModeSelector({
+const TIME_CONTROL_LABELS: { value: TimeControl; label: string; sub: string }[] = [
+  { value: "endless", label: "∞",    sub: "No limit"  },
+  { value: "10s",     label: "10s",  sub: "10 seconds" },
+  { value: "30s",     label: "30s",  sub: "30 seconds" },
+  { value: "1m",      label: "1m",   sub: "1 minute"   },
+];
+
+function TimeControlSelector({
   value,
   onChange,
 }: {
-  value: GameMode;
-  onChange: (m: GameMode) => void;
+  value:    TimeControl;
+  onChange: (tc: TimeControl) => void;
 }) {
   return (
     <div className="mb-5">
-      <p className="text-gray-500 text-xs uppercase tracking-widest mb-2">Game Mode</p>
-      <div className="flex gap-2">
-        {(["classic", "timed"] as GameMode[]).map(mode => (
+      <p className="text-gray-500 text-xs uppercase tracking-widest mb-2">Time Control</p>
+      <div className="grid grid-cols-4 gap-1.5">
+        {TIME_CONTROL_LABELS.map(({ value: tc, label, sub }) => (
           <button
-            key={mode}
-            onClick={() => onChange(mode)}
-            className={`
-              flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors
-              ${value === mode
-                ? "bg-indigo-600 text-white"
-                : "bg-gray-800 text-gray-400 hover:text-white"}
-            `}
+            key={tc}
+            onClick={() => onChange(tc)}
+            className="flex flex-col items-center py-2 rounded-lg transition-colors"
+            style={value === tc ? {
+              background: "rgba(99,102,241,0.25)",
+              border: "1px solid rgba(99,102,241,0.5)",
+              color: "#a5b4fc",
+            } : {
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "#6b7280",
+            }}
           >
-            {mode === "classic" ? "Classic" : "Timed (30s)"}
+            <span className="text-sm font-bold">{label}</span>
+            <span className="text-[10px] mt-0.5 leading-tight opacity-70">{sub}</span>
           </button>
         ))}
       </div>
@@ -59,7 +71,7 @@ function Spinner({ label }: { label: string }) {
 
 export default function Lobby({ session, socket, onMatchFound, onLogout }: Props) {
   const [tab,          setTab]         = useState<Tab>("find");
-  const [gameMode,     setGameMode]    = useState<GameMode>("classic");
+  const [timeControl,  setTimeControl] = useState<TimeControl>("endless");
   const [status,       setStatus]      = useState<LobbyStatus>("idle");
   const [error,        setError]       = useState("");
   const [ticket,       setTicket]      = useState<string | null>(null);
@@ -70,7 +82,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
 
   // ── Stable callback so effects don't re-register on every render ─────────
   const handleMatchFound = useCallback(
-    (matchId: string, mode: GameMode) => onMatchFound(matchId, mode),
+    (matchId: string, mode: TimeControl) => onMatchFound(matchId, mode),
     [onMatchFound]
   );
 
@@ -84,7 +96,8 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
         return;
       }
       const props = matched.self?.string_properties ?? {};
-      const mode: GameMode = props["gameMode"] === "timed" ? "timed" : "classic";
+      const tc    = props["timeControl"];
+      const mode: TimeControl = (tc === "10s" || tc === "30s" || tc === "1m") ? tc : "endless";
 
       try {
         await socket.joinMatch(matchId);
@@ -106,12 +119,12 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
 
     socket.onmatchdata = (data) => {
       if (data.op_code === OpCode.GAME_STATE) {
-        handleMatchFound(waitMatchId, gameMode);
+        handleMatchFound(waitMatchId, timeControl);
       }
     };
 
     return () => { socket.onmatchdata = () => {}; };
-  }, [status, waitMatchId, gameMode, socket, handleMatchFound]);
+  }, [status, waitMatchId, timeControl, socket, handleMatchFound]);
 
   // ── Tab switch helpers ────────────────────────────────────────────────────
   const switchTab = (t: Tab) => {
@@ -126,7 +139,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
     setStatus("searching");
     setError("");
     try {
-      const result = await socket.addMatchmaker("*", 2, 2, { gameMode }, {});
+      const result = await socket.addMatchmaker(`+properties.timeControl:${timeControl}`, 2, 2, { timeControl }, {});
       setTicket(result.ticket);
     } catch (err) {
       console.error("addMatchmaker:", err);
@@ -149,7 +162,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
     setStatus("searching");
     setError("");
     try {
-      const resp = await nakamaClient.rpc(session, "createRoom", { gameMode });
+      const resp = await nakamaClient.rpc(session, "createRoom", { timeControl });
       // resp.payload is already a parsed object (nakama-js deserialises the JSON)
       const { matchId } = resp.payload as { matchId: string };
       if (!matchId) throw new Error("No matchId returned from createRoom RPC");
@@ -158,6 +171,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
       setRoomCode(matchId);
       setWaitMatchId(matchId);
       setStatus("waiting");
+
     } catch (err) {
       console.error("createRoom:", err);
       setError("Failed to create room. Please try again.");
@@ -192,8 +206,8 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
     setError("");
     try {
       await socket.joinMatch(code);
-      // gameMode is unknown here — Phase 5 GameBoard will read it from GAME_STATE
-      handleMatchFound(code, "classic");
+      // timeControl is unknown here — GameBoard reads it from GAME_STATE
+      handleMatchFound(code, "endless");
     } catch (err) {
       console.error("joinMatch:", err);
       setError("Could not join room. Check the code and try again.");
@@ -281,7 +295,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
               <>
                 {status === "idle" && (
                   <>
-                    <ModeSelector value={gameMode} onChange={setGameMode} />
+                    <TimeControlSelector value={timeControl} onChange={setTimeControl} />
                     <button
                       onClick={handleFindMatch}
                       className="w-full bg-indigo-600 hover:bg-indigo-500 text-white
@@ -313,7 +327,7 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
               <>
                 {status === "idle" && (
                   <>
-                    <ModeSelector value={gameMode} onChange={setGameMode} />
+                    <TimeControlSelector value={timeControl} onChange={setTimeControl} />
                     <button
                       onClick={handleCreateRoom}
                       className="w-full bg-indigo-600 hover:bg-indigo-500 text-white

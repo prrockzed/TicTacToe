@@ -1,13 +1,13 @@
 import type { Session, Socket } from "@heroiclabs/nakama-js";
 import { useMatch } from "../hooks/useMatch";
-import type { GameMode } from "../types";
+import type { TimeControl } from "../types";
 
 interface Props {
-  session:    Session;
-  socket:     Socket;
-  matchId:    string;
-  gameMode:   GameMode;
-  onGameOver: () => void;
+  session:     Session;
+  socket:      Socket;
+  matchId:     string;
+  timeControl: TimeControl;
+  onGameOver:  () => void;
 }
 
 const WIN_LINES = [
@@ -28,15 +28,23 @@ function getWinningCells(board: (string | null)[], symbol: "X" | "O" | null): Se
 
 const BG = "radial-gradient(ellipse at 50% 0%, #1e1040 0%, #0a0a12 60%)";
 
-export default function GameBoard({ session, socket, matchId, gameMode: propMode, onGameOver }: Props) {
+function formatClock(s: number): string {
+  if (s >= 60) return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+  return `${s}s`;
+}
+
+export default function GameBoard({ session, socket, matchId, timeControl: propTC, onGameOver }: Props) {
   const { gameState, gameOver, sendMove } = useMatch(socket, matchId);
 
   const myUserId   = session.user_id ?? "";
   const me         = gameState?.players[myUserId];
   const opponentId = gameState?.playerOrder.find(id => id !== myUserId);
   const opponent   = opponentId ? gameState?.players[opponentId] : undefined;
-  const isMyTurn   = gameState?.status === "playing" && gameState.currentTurn === myUserId && !gameOver;
-  const mode       = gameState?.gameMode ?? propMode;
+  const isMyTurn    = gameState?.status === "playing" && gameState.currentTurn === myUserId && !gameOver;
+  const tc          = gameState?.timeControl ?? propTC;
+  const isTimed     = tc !== "endless";
+  const myTime      = isTimed ? (gameState?.playerTimes[myUserId] ?? 0) : null;
+  const opTime      = isTimed && opponentId ? (gameState?.playerTimes[opponentId] ?? 0) : null;
 
   const displayBoard = gameOver ? gameOver.board : (gameState?.board ?? Array(9).fill(null));
   const winCells     = gameOver ? getWinningCells(displayBoard, gameOver.winnerSymbol) : new Set<number>();
@@ -89,12 +97,12 @@ export default function GameBoard({ session, socket, matchId, gameMode: propMode
           <span
             className="text-xs font-semibold px-3 py-1 rounded-full"
             style={{
-              background: mode === "timed" ? "rgba(239,68,68,0.15)" : "rgba(99,102,241,0.15)",
-              color:      mode === "timed" ? "#fca5a5"              : "#a5b4fc",
-              border:     `1px solid ${mode === "timed" ? "rgba(239,68,68,0.3)" : "rgba(99,102,241,0.3)"}`,
+              background: isTimed ? "rgba(239,68,68,0.15)" : "rgba(99,102,241,0.15)",
+              color:      isTimed ? "#fca5a5"              : "#a5b4fc",
+              border:     `1px solid ${isTimed ? "rgba(239,68,68,0.3)" : "rgba(99,102,241,0.3)"}`,
             }}
           >
-            {mode === "timed" ? "Timed Mode" : "Classic Mode"}
+            {isTimed ? `${tc} per player` : "Endless"}
           </span>
         </div>
 
@@ -105,6 +113,7 @@ export default function GameBoard({ session, socket, matchId, gameMode: propMode
             symbol={me?.symbol ?? "X"}
             active={isMyTurn}
             align="left"
+            timeRemaining={myTime}
           />
           <span className="text-gray-700 text-xs">vs</span>
           <PlayerChip
@@ -112,13 +121,9 @@ export default function GameBoard({ session, socket, matchId, gameMode: propMode
             symbol={opponent?.symbol ?? "O"}
             active={!isMyTurn && gameState.status === "playing" && !gameOver}
             align="right"
+            timeRemaining={opTime}
           />
         </div>
-
-        {/* Timer bar — timed mode only */}
-        {mode === "timed" && gameState.status === "playing" && !gameOver && (
-          <TimerBar seconds={gameState.turnTimeRemaining} max={30} isMyTurn={isMyTurn} />
-        )}
 
         {/* Board */}
         <div
@@ -241,17 +246,19 @@ function Cell({
 // ── PlayerChip ────────────────────────────────────────────────────────────────
 
 function PlayerChip({
-  username, symbol, active, align,
+  username, symbol, active, align, timeRemaining,
 }: {
-  username: string;
-  symbol:   "X" | "O";
-  active:   boolean;
-  align:    "left" | "right";
+  username:      string;
+  symbol:        "X" | "O";
+  active:        boolean;
+  align:         "left" | "right";
+  timeRemaining: number | null;
 }) {
   const isX    = symbol === "X";
   const color  = isX ? "#3b82f6" : "#f43f5e";
   const glyph  = isX ? "✕" : "○";
-  const label  = username.length > 12 ? username.slice(0, 12) + "…" : username;
+  const label  = username.length > 10 ? username.slice(0, 10) + "…" : username;
+  const urgent = timeRemaining !== null && timeRemaining <= 5;
 
   return (
     <div className={`flex flex-col gap-0.5 ${align === "right" ? "items-end" : "items-start"}`}>
@@ -264,40 +271,24 @@ function PlayerChip({
           {label}
         </span>
       </div>
+
+      {/* Clock — only shown in timed modes */}
+      {timeRemaining !== null && (
+        <span
+          className="text-xs font-mono font-bold transition-colors"
+          style={{ color: urgent ? "#ef4444" : active ? "#a5b4fc" : "#4b5563" }}
+        >
+          {formatClock(timeRemaining)}
+        </span>
+      )}
+
+      {/* Turn indicator */}
       {active && (
         <div className={`flex items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""}`}>
           <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
           <span className="text-indigo-400 text-xs">{align === "left" ? "your turn" : "their turn"}</span>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── TimerBar ──────────────────────────────────────────────────────────────────
-
-function TimerBar({ seconds, max, isMyTurn }: { seconds: number; max: number; isMyTurn: boolean }) {
-  const pct     = Math.max(0, Math.min(1, seconds / max));
-  const urgent  = seconds <= 10;
-  const barColor = urgent ? "#ef4444" : isMyTurn ? "#6366f1" : "#374151";
-
-  return (
-    <div className="flex items-center gap-3">
-      <div
-        className="flex-1 h-1.5 rounded-full overflow-hidden"
-        style={{ background: "rgba(255,255,255,0.08)" }}
-      >
-        <div
-          className="h-full rounded-full transition-all duration-1000"
-          style={{ width: `${pct * 100}%`, background: barColor }}
-        />
-      </div>
-      <span
-        className="text-xs font-mono w-7 text-right"
-        style={{ color: urgent ? "#ef4444" : "#6b7280" }}
-      >
-        {seconds}s
-      </span>
     </div>
   );
 }
