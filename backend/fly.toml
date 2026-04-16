@@ -1,0 +1,26 @@
+# Fly.io deployment configuration for Nakama backend
+# Replace YOUR-APP-NAME with the name you chose during `fly apps create`
+app    = "YOUR-APP-NAME"
+primary_region = "sin"      # Singapore — change to closest: bom/fra/iad/lax/syd
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port        = 7350
+  force_https          = true
+  auto_stop_machines   = "off"   # keep the game server always running
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval     = "15s"
+    method       = "GET"
+    timeout      = "10s"
+    path         = "/healthcheck"
+
+[[vm]]
+  memory   = "512mb"
+  cpu_kind = "shared"
+  cpus     = 1

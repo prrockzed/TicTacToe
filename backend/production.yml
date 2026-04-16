@@ -1,0 +1,16 @@
+# Nakama production configuration (used on Fly.io)
+name: nakama
+
+logger:
+  level: "WARN"
+
+console:
+  username: admin
+  password: "changeme123"   # change this before going live
+
+session:
+  token_expiry_sec: 86400   # 24 hours
+
+runtime:
+  path: "/nakama/data/build"
+  js_entrypoint: "index.js"
