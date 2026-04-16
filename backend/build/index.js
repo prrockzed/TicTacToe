@@ -35,6 +35,7 @@ var MODULE_NAME = "tictactoe";
 var RPC_CREATE_ROOM = "createRoom";
 var RPC_LIST_ROOMS = "listRooms";
 var RPC_GET_LEADERBOARD = "getLeaderboard";
+var RPC_GET_STATS = "getStats";
 // Leaderboard
 var LEADERBOARD_ID = "tictactoe_wins";
 // Leaderboard system for Tic-Tac-Toe.
@@ -445,6 +446,18 @@ var rpcListRooms = function (ctx, logger, nk, payload) {
     logger.debug("listRooms: returning %d open rooms", rooms.length);
     return JSON.stringify({ rooms: rooms });
 };
+// ─── RPC: getStats ────────────────────────────────────────────────────────────
+// Payload:  (none)
+// Response: { "activeGames": N, "waitingRooms": N, "playersOnline": N }
+var rpcGetStats = function (ctx, logger, nk, _payload) {
+    var activeMatches = nk.matchList(100, true, null, 2, 2, "*");
+    var waitingMatches = nk.matchList(100, true, null, 1, 1, "*");
+    var activeGames = activeMatches.length;
+    var waitingRooms = waitingMatches.length;
+    var playersOnline = activeGames * 2 + waitingRooms;
+    logger.debug("getStats: %d active games, %d waiting rooms", activeGames, waitingRooms);
+    return JSON.stringify({ activeGames: activeGames, waitingRooms: waitingRooms, playersOnline: playersOnline });
+};
 // Nakama TypeScript Runtime — Entry Point
 // The Nakama runtime discovers this function by its global name: InitModule.
 function InitModule(ctx, logger, nk, initializer) {
@@ -463,5 +476,8 @@ function InitModule(ctx, logger, nk, initializer) {
     initLeaderboard(nk, logger);
     initializer.registerRpc(RPC_GET_LEADERBOARD, rpcGetLeaderboard);
     logger.info("RPC registered: %s", RPC_GET_LEADERBOARD);
+    // Phase 8: Server stats RPC
+    initializer.registerRpc(RPC_GET_STATS, rpcGetStats);
+    logger.info("RPC registered: %s", RPC_GET_STATS);
     logger.info("Tic-Tac-Toe module initialized.");
 }

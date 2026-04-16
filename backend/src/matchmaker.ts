@@ -117,3 +117,25 @@ const rpcListRooms: nkruntime.RpcFunction = function (
   logger.debug("listRooms: returning %d open rooms", rooms.length);
   return JSON.stringify({ rooms });
 };
+
+// ─── RPC: getStats ────────────────────────────────────────────────────────────
+// Payload:  (none)
+// Response: { "activeGames": N, "waitingRooms": N, "playersOnline": N }
+
+const rpcGetStats: nkruntime.RpcFunction = function (
+  ctx: nkruntime.Context,
+  logger: nkruntime.Logger,
+  nk: nkruntime.Nakama,
+  _payload: string
+): string {
+  const activeMatches  = nk.matchList(100, true, null, 2, 2, "*");
+  const waitingMatches = nk.matchList(100, true, null, 1, 1, "*");
+
+  const activeGames  = activeMatches.length;
+  const waitingRooms = waitingMatches.length;
+  const playersOnline = activeGames * 2 + waitingRooms;
+
+  logger.debug("getStats: %d active games, %d waiting rooms", activeGames, waitingRooms);
+
+  return JSON.stringify({ activeGames, waitingRooms, playersOnline });
+};

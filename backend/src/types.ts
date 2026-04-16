@@ -56,6 +56,7 @@ const MODULE_NAME = "tictactoe";
 const RPC_CREATE_ROOM     = "createRoom";
 const RPC_LIST_ROOMS      = "listRooms";
 const RPC_GET_LEADERBOARD = "getLeaderboard";
+const RPC_GET_STATS       = "getStats";
 
 // Leaderboard
 const LEADERBOARD_ID = "tictactoe_wins";

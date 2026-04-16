@@ -29,5 +29,9 @@ function InitModule(
   initializer.registerRpc(RPC_GET_LEADERBOARD, rpcGetLeaderboard);
   logger.info("RPC registered: %s", RPC_GET_LEADERBOARD);
 
+  // Phase 8: Server stats RPC
+  initializer.registerRpc(RPC_GET_STATS, rpcGetStats);
+  logger.info("RPC registered: %s", RPC_GET_STATS);
+
   logger.info("Tic-Tac-Toe module initialized.");
 }

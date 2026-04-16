@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Session, Socket } from "@heroiclabs/nakama-js";
 import { nakamaClient } from "../nakama";
 import { OpCode, type TimeControl } from "../types";
@@ -79,6 +79,25 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
   const [roomCode,     setRoomCode]    = useState("");  // created room's code (matchId)
   const [joinCode,     setJoinCode]    = useState("");  // code the user types to join
   const [copied,       setCopied]      = useState(false);
+  const [stats,        setStats]       = useState<{ activeGames: number; waitingRooms: number; playersOnline: number } | null>(null);
+  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Poll server stats every 5 seconds ────────────────────────────────────
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const resp = await nakamaClient.rpc(session, "getStats", {});
+        setStats(resp.payload as { activeGames: number; waitingRooms: number; playersOnline: number });
+      } catch {
+        // Server might be restarting — silently ignore
+      }
+    };
+    fetchStats();
+    statsTimerRef.current = setInterval(fetchStats, 5000);
+    return () => {
+      if (statsTimerRef.current) clearInterval(statsTimerRef.current);
+    };
+  }, [session]);
 
   // ── Stable callback so effects don't re-register on every render ─────────
   const handleMatchFound = useCallback(
@@ -416,10 +435,26 @@ export default function Lobby({ session, socket, onMatchFound, onLogout }: Props
           </div>
         </div>
 
-        {/* Footer hint */}
-        <p className="text-center text-gray-700 text-xs mt-5">
-          Open two tabs to test multiplayer locally
-        </p>
+        {/* Server stats footer */}
+        <div className="mt-5 flex items-center justify-center gap-3 text-xs text-gray-700">
+          {stats ? (
+            <>
+              <span className="flex items-center gap-1">
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ background: stats.activeGames > 0 ? "#22c55e" : "#374151" }}
+                />
+                {stats.activeGames} game{stats.activeGames !== 1 ? "s" : ""} live
+              </span>
+              <span>·</span>
+              <span>{stats.waitingRooms} room{stats.waitingRooms !== 1 ? "s" : ""} waiting</span>
+              <span>·</span>
+              <span>{stats.playersOnline} online</span>
+            </>
+          ) : (
+            <span>Connecting…</span>
+          )}
+        </div>
 
       </div>
     </div>
