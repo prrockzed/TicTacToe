@@ -14,3 +14,7 @@ session:
 runtime:
   path: "/nakama/data/build"
   js_entrypoint: "index.js"
+
+socket:
+  cors_allowed_origins:
+    - "*"
