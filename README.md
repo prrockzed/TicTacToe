@@ -6,7 +6,7 @@ A production-ready, real-time multiplayer Tic-Tac-Toe game built with a **server
 
 | Service | URL |
 |---|---|
-| **Frontend** | https://your-vercel-url.vercel.app |
+| **Frontend** | https://tictactoe-pr.vercel.app/ |
 | **Nakama API** | https://tictactoe-nakama-8o08.onrender.com |
 | **Healthcheck** | https://tictactoe-nakama-8o08.onrender.com/healthcheck |
 
