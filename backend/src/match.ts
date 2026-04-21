@@ -200,7 +200,11 @@ const matchLeave: nkruntime.MatchLeaveFunction = function (
 
       var forfeitWinner = gs.players[winnerId];
       if (forfeitWinner) {
-        recordWin(nk, logger, winnerId, forfeitWinner.username);
+        recordResult(nk, logger, winnerId, forfeitWinner.username, "win");
+      }
+      var forfeitLoser = gs.players[p.userId];
+      if (forfeitLoser) {
+        recordResult(nk, logger, p.userId, forfeitLoser.username, "loss");
       }
 
       dispatcher.broadcastMessage(
@@ -262,7 +266,11 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
 
         var timeoutWinner = gs.players[winnerId];
         if (timeoutWinner) {
-          recordWin(nk, logger, winnerId, timeoutWinner.username);
+          recordResult(nk, logger, winnerId, timeoutWinner.username, "win");
+        }
+        var timeoutLoser = gs.players[loserId];
+        if (timeoutLoser) {
+          recordResult(nk, logger, loserId, timeoutLoser.username, "loss");
         }
 
         dispatcher.broadcastMessage(
@@ -297,7 +305,11 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
 
       var resignWinner = gs.players[winnerId];
       if (resignWinner) {
-        recordWin(nk, logger, winnerId, resignWinner.username);
+        recordResult(nk, logger, winnerId, resignWinner.username, "win");
+      }
+      var resignLoser = gs.players[loserId];
+      if (resignLoser) {
+        recordResult(nk, logger, loserId, resignLoser.username, "loss");
       }
 
       dispatcher.broadcastMessage(
@@ -388,9 +400,14 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
       gs.status = "finished";
       gs.winner = winnerId;
 
-      var matchWinner = gs.players[winnerId];
+      var matchLoserId = getOpponentId(gs, winnerId);
+      var matchWinner  = gs.players[winnerId];
       if (matchWinner) {
-        recordWin(nk, logger, winnerId, matchWinner.username);
+        recordResult(nk, logger, winnerId, matchWinner.username, "win");
+      }
+      var matchLoser = gs.players[matchLoserId];
+      if (matchLoser) {
+        recordResult(nk, logger, matchLoserId, matchLoser.username, "loss");
       }
 
       broadcastState(dispatcher, gs);
@@ -420,6 +437,14 @@ const matchLoop: nkruntime.MatchLoopFunction = function (
     if (isBoardFull(gs.board)) {
       gs.status = "finished";
       gs.winner = "draw";
+
+      for (var d = 0; d < gs.playerOrder.length; d++) {
+        var drawPlayerId = gs.playerOrder[d];
+        var drawPlayer   = gs.players[drawPlayerId];
+        if (drawPlayer) {
+          recordResult(nk, logger, drawPlayerId, drawPlayer.username, "draw");
+        }
+      }
 
       broadcastState(dispatcher, gs);
 

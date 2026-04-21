@@ -39,14 +39,17 @@ var RPC_GET_LEADERBOARD = "getLeaderboard";
 var RPC_GET_STATS = "getStats";
 // Leaderboard
 var LEADERBOARD_ID = "tictactoe_wins";
-// Leaderboard system for Tic-Tac-Toe.
-// Uses Nakama's built-in leaderboard API to track wins per player.
+// Leaderboard + per-player stats for Tic-Tac-Toe.
+// Uses Nakama Storage for W/D/L counts and Nakama Leaderboard for total points.
+// Win = 2 pts, Draw = 1 pt, Loss = 0 pts.
 // All declarations are global — no ES module exports (outFile bundling).
+var STATS_COLLECTION = "player_stats";
+var STATS_KEY = "stats";
 // Called from InitModule to ensure the leaderboard exists before any match runs.
 function initLeaderboard(nk, logger) {
     try {
         nk.leaderboardCreate(LEADERBOARD_ID, true, // authoritative — only server writes
-        "descending" /* nkruntime.SortOrder.DESCENDING */, // higher wins = better rank
+        "descending" /* nkruntime.SortOrder.DESCENDING */, // higher score = better rank
         "increment" /* nkruntime.Operator.INCREMENTAL */, // each write increments the score
         null, // no automatic reset (lifetime leaderboard)
         null, // no metadata
@@ -55,33 +58,112 @@ function initLeaderboard(nk, logger) {
         logger.info("Leaderboard ready: %s", LEADERBOARD_ID);
     }
     catch (e) {
-        // Nakama will throw if the leaderboard already exists with the same config.
-        // This is safe to ignore on server restarts.
         logger.debug("Leaderboard init skipped (likely already exists): %s", e);
     }
 }
-// Increment the win count for a player. Called by the match handler after every win.
-function recordWin(nk, logger, userId, username) {
+// Record a game result for a player.
+// Increments the W/D/L count in Nakama Storage and adds points to the leaderboard.
+function recordResult(nk, logger, userId, username, result) {
     try {
-        nk.leaderboardRecordWrite(LEADERBOARD_ID, userId, username, 1, 0, undefined);
-        logger.debug("Win recorded: %s (%s)", username, userId);
+        // ── Read current stats from storage ──────────────────────────────────────
+        var reads = [
+            { collection: STATS_COLLECTION, key: STATS_KEY, userId: userId },
+        ];
+        var objects = nk.storageRead(reads);
+        var stats = { wins: 0, draws: 0, losses: 0 };
+        if (objects.length > 0 && objects[0].value) {
+            var stored = objects[0].value;
+            stats.wins = stored.wins || 0;
+            stats.draws = stored.draws || 0;
+            stats.losses = stored.losses || 0;
+        }
+        // ── Increment the right counter ───────────────────────────────────────────
+        if (result === "win")
+            stats.wins += 1;
+        else if (result === "draw")
+            stats.draws += 1;
+        else
+            stats.losses += 1;
+        // ── Write updated stats back to storage ───────────────────────────────────
+        var writes = [{
+                collection: STATS_COLLECTION,
+                key: STATS_KEY,
+                userId: userId,
+                value: stats,
+                permissionRead: 2, // public read
+                permissionWrite: 0, // server-only write
+            }];
+        nk.storageWrite(writes);
+        // ── Add points to leaderboard (INCREMENTAL) ───────────────────────────────
+        // Win = 2 pts, Draw = 1 pt, Loss = 0 pts
+        // Always write (even 0) so every player who has played appears on the leaderboard.
+        var points = result === "win" ? 2 : result === "draw" ? 1 : 0;
+        nk.leaderboardRecordWrite(LEADERBOARD_ID, userId, username, points, 0, undefined);
+        logger.debug("Result recorded: %s (%s) — %s, +%d pts", username, userId, result, points);
     }
     catch (e) {
-        logger.warn("Failed to record win for %s: %s", username, e);
+        logger.warn("Failed to record result for %s: %s", username, e);
     }
 }
 // RPC: getLeaderboard
-// Returns the global top-10 and the caller's own record (even if outside top 10).
+// Returns the global top-10 with W/D/L stats and the caller's own record.
 var rpcGetLeaderboard = function (ctx, logger, nk, _payload) {
-    var _a;
+    var _a, _b;
     try {
-        // Single call: top-10 records + caller's own record in ownerRecords
+        // ── Fetch leaderboard records ─────────────────────────────────────────────
         var result = nk.leaderboardRecordsList(LEADERBOARD_ID, ctx.userId ? [ctx.userId] : undefined, 10, undefined, 0);
+        var records = (_a = result.records) !== null && _a !== void 0 ? _a : [];
+        var ownerRecs = (_b = result.ownerRecords) !== null && _b !== void 0 ? _b : [];
+        // ── Collect all userIds to batch-read storage stats ───────────────────────
+        var allIds = [];
+        for (var i = 0; i < records.length; i++) {
+            allIds.push(records[i].ownerId);
+        }
+        if (ctx.userId) {
+            var found = false;
+            for (var m = 0; m < allIds.length; m++) {
+                if (allIds[m] === ctx.userId) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                allIds.push(ctx.userId);
+        }
+        // ── Batch-read W/D/L stats from storage ───────────────────────────────────
+        var statsMap = {};
+        if (allIds.length > 0) {
+            var readReqs = [];
+            for (var j = 0; j < allIds.length; j++) {
+                readReqs.push({ collection: STATS_COLLECTION, key: STATS_KEY, userId: allIds[j] });
+            }
+            var storageObjs = nk.storageRead(readReqs);
+            for (var k = 0; k < storageObjs.length; k++) {
+                var obj = storageObjs[k];
+                var v = obj.value;
+                statsMap[obj.userId] = {
+                    wins: v.wins || 0,
+                    draws: v.draws || 0,
+                    losses: v.losses || 0,
+                };
+            }
+        }
+        // ── Attach W/D/L stats to a leaderboard record ────────────────────────────
+        var withStats = function (r) {
+            var s = statsMap[r.ownerId] || { wins: 0, draws: 0, losses: 0 };
+            return {
+                ownerId: r.ownerId,
+                username: r.username,
+                score: r.score,
+                rank: r.rank,
+                wins: s.wins,
+                draws: s.draws,
+                losses: s.losses,
+            };
+        };
         return JSON.stringify({
-            records: (_a = result.records) !== null && _a !== void 0 ? _a : [],
-            ownRecord: (result.ownerRecords && result.ownerRecords.length > 0)
-                ? result.ownerRecords[0]
-                : null,
+            records: records.map(withStats),
+            ownRecord: ownerRecs.length > 0 ? withStats(ownerRecs[0]) : null,
         });
     }
     catch (e) {
@@ -209,7 +291,11 @@ var matchLeave = function (ctx, logger, nk, dispatcher, tick, state, presences) 
             gs.winner = winnerId;
             var forfeitWinner = gs.players[winnerId];
             if (forfeitWinner) {
-                recordWin(nk, logger, winnerId, forfeitWinner.username);
+                recordResult(nk, logger, winnerId, forfeitWinner.username, "win");
+            }
+            var forfeitLoser = gs.players[p.userId];
+            if (forfeitLoser) {
+                recordResult(nk, logger, p.userId, forfeitLoser.username, "loss");
             }
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                 winner: winnerId,
@@ -244,7 +330,11 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
                 gs.winner = winnerId_1;
                 var timeoutWinner = gs.players[winnerId_1];
                 if (timeoutWinner) {
-                    recordWin(nk, logger, winnerId_1, timeoutWinner.username);
+                    recordResult(nk, logger, winnerId_1, timeoutWinner.username, "win");
+                }
+                var timeoutLoser = gs.players[loserId];
+                if (timeoutLoser) {
+                    recordResult(nk, logger, loserId, timeoutLoser.username, "loss");
                 }
                 dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                     winner: winnerId_1,
@@ -270,7 +360,11 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
             gs.winner = winnerId_2;
             var resignWinner = gs.players[winnerId_2];
             if (resignWinner) {
-                recordWin(nk, logger, winnerId_2, resignWinner.username);
+                recordResult(nk, logger, winnerId_2, resignWinner.username, "win");
+            }
+            var resignLoser = gs.players[loserId];
+            if (resignLoser) {
+                recordResult(nk, logger, loserId, resignLoser.username, "loss");
             }
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                 winner: winnerId_2,
@@ -331,9 +425,14 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
             }
             gs.status = "finished";
             gs.winner = winnerId;
+            var matchLoserId = getOpponentId(gs, winnerId);
             var matchWinner = gs.players[winnerId];
             if (matchWinner) {
-                recordWin(nk, logger, winnerId, matchWinner.username);
+                recordResult(nk, logger, winnerId, matchWinner.username, "win");
+            }
+            var matchLoser = gs.players[matchLoserId];
+            if (matchLoser) {
+                recordResult(nk, logger, matchLoserId, matchLoser.username, "loss");
             }
             broadcastState(dispatcher, gs);
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
@@ -349,6 +448,13 @@ var matchLoop = function (ctx, logger, nk, dispatcher, tick, state, messages) {
         if (isBoardFull(gs.board)) {
             gs.status = "finished";
             gs.winner = "draw";
+            for (var d = 0; d < gs.playerOrder.length; d++) {
+                var drawPlayerId = gs.playerOrder[d];
+                var drawPlayer = gs.players[drawPlayerId];
+                if (drawPlayer) {
+                    recordResult(nk, logger, drawPlayerId, drawPlayer.username, "draw");
+                }
+            }
             broadcastState(dispatcher, gs);
             dispatcher.broadcastMessage(OpCode.GAME_OVER, JSON.stringify({
                 winner: null,

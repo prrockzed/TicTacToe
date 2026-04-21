@@ -9,8 +9,11 @@ interface Props {
 interface LeaderboardEntry {
   ownerId:  string;
   username: string;
-  score:    number;   // total wins
+  score:    number;   // total points (wins×2 + draws×1)
   rank:     number;
+  wins:     number;
+  draws:    number;
+  losses:   number;
 }
 
 interface LeaderboardData {
@@ -63,7 +66,7 @@ export default function Leaderboard({ session }: Props) {
     return (
       <div className="text-center py-8">
         <p className="text-gray-500 text-sm">No games played yet.</p>
-        <p className="text-gray-700 text-xs mt-1">Win a match to appear here!</p>
+        <p className="text-gray-700 text-xs mt-1">Play a match to earn points!</p>
       </div>
     );
   }
@@ -75,7 +78,8 @@ export default function Leaderboard({ session }: Props) {
       <div className="flex items-center px-3 pb-1">
         <span className="w-8 text-gray-700 text-xs text-center">#</span>
         <span className="flex-1 text-gray-700 text-xs uppercase tracking-widest pl-2">Player</span>
-        <span className="text-gray-700 text-xs uppercase tracking-widest">Wins</span>
+        <span className="text-gray-700 text-xs uppercase tracking-widest mr-3">W/D/L</span>
+        <span className="w-8 text-gray-700 text-xs uppercase tracking-widest text-right">Pts</span>
       </div>
 
       {/* Top 10 rows */}
@@ -101,7 +105,7 @@ export default function Leaderboard({ session }: Props) {
       {/* No record yet */}
       {!myInTop10 && !showOwnRow && (
         <p className="text-center text-gray-700 text-xs pt-3">
-          Win a game to appear on the board!
+          Play a game to earn points!
         </p>
       )}
     </div>
@@ -137,7 +141,10 @@ function Row({ record, isMe }: { record: LeaderboardEntry; isMe: boolean }) {
         {record.username}
         {isMe && <span className="text-xs text-indigo-500 ml-1.5">(you)</span>}
       </span>
-      <span className="text-sm font-bold" style={{ color: isMe ? "#a5b4fc" : "#9ca3af" }}>
+      <span className="text-xs mr-3" style={{ color: isMe ? "#818cf8" : "#6b7280" }}>
+        {record.wins}W/{record.draws}D/{record.losses}L
+      </span>
+      <span className="w-8 text-sm font-bold text-right" style={{ color: isMe ? "#a5b4fc" : "#9ca3af" }}>
         {record.score}
       </span>
     </div>
